@@ -127,7 +127,13 @@ def classify_traffic_light(crop_bgr: np.ndarray, night: bool | None = None) -> s
         return None
     if not tall:
         return None
-    g_strong = int((green & (sat >= 150) & (val >= 190)).sum())
+    # A lit lamp is one compact blob inside the box. Saturated cyan sky shares the green hue range
+    # (it made red lights read green), but it touches the box edges or shows as slivers between visors.
+    blobs = (green & (sat >= 150) & (val >= 190)).astype(np.uint8)
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(blobs, connectivity=8)
+    edge = set(np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]).tolist())) - {0}
+    g_strong = max((int(a) for k, (_, _, bw, bh, a) in enumerate(stats)
+                    if k and k not in edge and min(bw, bh) >= 2 and a >= 0.5 * bw * bh), default=0)
     r_strong = int((red & (sat >= 120) & (val >= 200)).sum())
     if g_strong >= need and g_strong > r_strong:
         return "green"

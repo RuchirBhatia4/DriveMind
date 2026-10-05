@@ -7,11 +7,13 @@ Three sets:
   lisa  The cropped LISA Traffic Light Dataset (San Diego), labelled by its authors. Never
         looked at during design. It has amber lights, which dev has none of.
   test  Lights in 20 BDD100K clips drawn at random after the classifier was frozen, labelled
-        by eye before either classifier ran on them.
+        by eye before either classifier ran on them. It found a failure (red read as green under
+        a cyan sky), so the fix was tested again on
+  test2 20 more clips, drawn and labelled the same way after the fix.
 Protocol, fixed before any test data was downloaded: eval/results/traffic_lights_preregistration.md
 
-    .venv/bin/python -m eval.traffic_light_eval collect   # test clips -> detections + labelling sheets
-    .venv/bin/python -m eval.traffic_light_eval dev|lisa|test
+    .venv/bin/python -m eval.traffic_light_eval collect test2   # clips -> detections + labelling sheets
+    .venv/bin/python -m eval.traffic_light_eval dev|lisa|test|test2
 """
 
 from __future__ import annotations
@@ -42,7 +44,8 @@ LISA_MAP = {"go": "green", "goLeft": "green", "goForward": "green", "stop": "red
             "warning": "yellow", "warningLeft": "yellow"}
 LIT = ("red", "yellow", "green")
 UNLIT = ("none", "pedestrian", "other")  # side view or unlit, pedestrian signal, not a traffic light
-STEP_S, TEST_SEED, TEST_N = 2.0, 0, 20
+STEP_S, TEST_N = 2.0, 20
+TEST_SEEDS = {"test": 0, "test2": 1}
 LISA_SCALE, LISA_MIN_H = 0.5, 12  # app frames are 640 px wide; YOLO rarely finds lights under ~12 px
 
 
@@ -175,13 +178,18 @@ def list_mirror_clips() -> list[str]:
     return clips
 
 
-def collect() -> None:
-    """Draw the test clips, find lights with the app's YOLO settings, and write labelling sheets
-    cropped from the full 1280x720 frame. The sheets show no classifier output."""
+def collect(name: str) -> None:
+    """Draw a test set's clips, find lights with the app's YOLO settings, and write labelling
+    sheets cropped from the full 1280x720 frame. The sheets show no classifier output."""
     from ultralytics import YOLO
 
-    pool = sorted(set(list_mirror_clips()) - set(DEV_CLIPS))
-    clips = sorted(random.Random(TEST_SEED).sample(pool, TEST_N))
+    used = set(DEV_CLIPS)
+    for other in TEST_SEEDS:
+        f = LABELS / f"traffic_lights_{other}.json"
+        if other != name and f.exists():
+            used |= {d["clip"] for d in json.loads(f.read_text())}
+    pool = sorted(set(list_mirror_clips()) - used)
+    clips = sorted(random.Random(TEST_SEEDS[name]).sample(pool, TEST_N))
     print(f"{len(pool)} clips in the mirror outside dev; drew {len(clips)}")
     paths = dict(zip(clips, get_clips(clips)))
     model = YOLO(settings.yolo_model)
@@ -197,11 +205,11 @@ def collect() -> None:
                 data.append({"clip": clip, "t": t, "box": [round(v, 1) for v in (x1, y1, x2, y2)], "label": None})
             t += STEP_S
     LABELS.mkdir(parents=True, exist_ok=True)
-    out = LABELS / "traffic_lights_test.json"
+    out = LABELS / f"traffic_lights_{name}.json"
     if out.exists() and any(d["label"] for d in json.loads(out.read_text())):
         raise SystemExit(f"{out} already has labels; not overwriting")
     out.write_text(json.dumps(data, indent=1))
-    sheets(data, "test", {c: p for c, p in paths.items()})
+    sheets(data, name, {c: p for c, p in paths.items()})
     print(f"{len(data)} lights in {len({d['clip'] for d in data})} of {len(clips)} clips -> {out}")
 
 
@@ -230,10 +238,12 @@ def sheets(data: list[dict], tag: str, paths: dict[str, str], per: int = 40, col
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("set", choices=["collect", "dev", "lisa", "test"])
-    which = ap.parse_args().set
+    ap.add_argument("set", choices=["collect", "dev", "lisa", "test", "test2"])
+    ap.add_argument("name", nargs="?", default="test2", choices=list(TEST_SEEDS), help="test set to collect")
+    args = ap.parse_args()
+    which = args.set
     if which == "collect":
-        return collect()
+        return collect(args.name)
     s = run_lisa() if which == "lisa" else run_bdd(which)
     RESULTS.mkdir(exist_ok=True)
     (RESULTS / f"traffic_lights_{which}.json").write_text(json.dumps(s, indent=1))
@@ -242,8 +252,10 @@ def main() -> None:
         "lisa": f"Every crop scaled to {LISA_SCALE:g}x (app frames are 640 px wide); crops under {LISA_MIN_H} px "
                 f"skipped ({s.get('skipped_too_small', 0)}). Night from the sequence name, as the app judges it from the "
                 "whole frame. No side views in this set: it only has lit, facing lights.",
-        "test": f"{s.get('clips', '?')} clips drawn after the classifier was frozen; {s.get('excluded_unsure', 0)} "
-                "lights labelled unsure and excluded.",
+        "test": f"{s.get('clips', '?')} clips with lights, drawn after the first version was frozen; "
+                f"{s.get('excluded_unsure', 0)} lights labelled unsure and excluded. In-sample for the current version.",
+        "test2": f"{s.get('clips', '?')} clips with lights, drawn after the current version was frozen; "
+                 f"{s.get('excluded_unsure', 0)} lights labelled unsure and excluded.",
     }
     print(table(which, s, notes[which]))
 

@@ -81,3 +81,42 @@ night it is 207 (0.8%).
 drawn (seed 0), 141 detections collected, no classifier run on them, and the sheets not yet looked
 at. It will be scored for the old rule, the pre-registered version (commit e6ed69d) and this
 revision. P1 and P2 apply to both versions.
+
+## Addendum 2 (after the BDD100K test)
+
+**Pre-registered BDD100K result.** The 20 clips held 141 detections in 16 clips: 82 lit lights,
+55 not lit, 4 unsure (excluded). A red ball shown with a green or amber turn arrow was labelled red,
+because for going straight "green" would be the dangerous answer.
+
+| Classifier | Lit: right | Lit: wrong colour | Lit: no answer | Not lit: false colour |
+|---|---|---|---|---|
+| Old colour counts | 52 | 27 (33%) | 3 | 15 / 55 |
+| Pre-registered version (e6ed69d) | 52 | 20 (24%) | 10 | 10 / 55 |
+| Revision (a1d20af) | 52 | 20 (24%) | 10 | 5 / 55 |
+
+P1 held (20 < 27 wrong colours). **P2 failed for both versions**: 24% wrong colours against a 5% target.
+19 of the 20 errors were red lights called **green**, all at one intersection in one clip
+(`0104f3cf-0dbe2960`, 19 frames 2 s apart). The camera rendered that sky saturated cyan, inside the
+hue range of a lit green lamp. P3 held on LISA: yellow was the weakest colour (40% right, against
+59-63% for red and green).
+
+**Revision 2 (this commit).** A lit green lamp must be one compact blob inside the box: not touching
+its edges, at least 2 px wide, and at least half filled. That rejects sky at the edges and slivers
+of sky between visors. The cost is coverage: the 19 dull red lamps under that sky now get no answer
+rather than a wrong one. In-sample on every set now:
+
+- test: 48 right, 1 wrong colour, 33 no answer; 4 / 55 false colours
+- dev: 72 right, 0 wrong colours, 13 no answer; 2 / 47 false colours
+- LISA: 0.4% wrong colours
+
+A second change, counting only glare-bright cores at night, was tried and dropped: it raised LISA's
+night red-called-yellow errors from 40 to 268.
+
+**New held-out test (test2).** 20 more clips, drawn with `random.Random(1).sample` from the mirror
+minus the dev and test clips. The protocol is otherwise the same: one frame every 2 s, the app's
+YOLO settings, labelled by eye before scoring, with red ball + arrow labelled red.
+
+Predictions for revision 2 on test2:
+- wrong colour on lit lights at most 5%
+- false colour on not-lit objects at most 10%
+- no answer for 30-45% of lit lights
