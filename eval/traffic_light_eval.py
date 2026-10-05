@@ -146,7 +146,8 @@ def run_lisa() -> dict:
         if max(small.shape[:2]) < LISA_MIN_H:
             skipped += 1
             continue
-        items.append((truth, old_classify(small), classify_traffic_light(small)))  # no frame, so night is judged from the crop
+        night = Path(path).name.startswith("ns")  # LISA names crops by sequence: ds = day, ns = night
+        items.append((truth, old_classify(small), classify_traffic_light(small, night)))
     s = score(items)
     s["skipped_too_small"] = skipped
     return s
@@ -239,7 +240,8 @@ def main() -> None:
     notes = {
         "dev": "Designed on these lights, so this is an optimistic, in-sample score.",
         "lisa": f"Every crop scaled to {LISA_SCALE:g}x (app frames are 640 px wide); crops under {LISA_MIN_H} px "
-                f"skipped ({s.get('skipped_too_small', 0)}). No side views in this set: it only has lit, facing lights.",
+                f"skipped ({s.get('skipped_too_small', 0)}). Night from the sequence name, as the app judges it from the "
+                "whole frame. No side views in this set: it only has lit, facing lights.",
         "test": f"{s.get('clips', '?')} clips drawn after the classifier was frozen; {s.get('excluded_unsure', 0)} "
                 "lights labelled unsure and excluded.",
     }

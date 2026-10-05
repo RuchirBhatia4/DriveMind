@@ -1,0 +1,53 @@
+{
+ "old": {
+  "lit": 27521,
+  "right": 18704,
+  "wrong_colour": 140,
+  "no_answer": 8677,
+  "unlit": 0,
+  "false_colour": 0,
+  "per_colour": {
+   "red": {
+    "n": 15045,
+    "right": 11155,
+    "wrong": 71
+   },
+   "yellow": {
+    "n": 873,
+    "right": 643,
+    "wrong": 3
+   },
+   "green": {
+    "n": 11603,
+    "right": 6906,
+    "wrong": 66
+   }
+  }
+ },
+ "new": {
+  "lit": 27521,
+  "right": 16636,
+  "wrong_colour": 119,
+  "no_answer": 10766,
+  "unlit": 0,
+  "false_colour": 0,
+  "per_colour": {
+   "red": {
+    "n": 15045,
+    "right": 9440,
+    "wrong": 41
+   },
+   "yellow": {
+    "n": 873,
+    "right": 348,
+    "wrong": 21
+   },
+   "green": {
+    "n": 11603,
+    "right": 6848,
+    "wrong": 57
+   }
+  }
+ },
+ "skipped_too_small": 9013
+}

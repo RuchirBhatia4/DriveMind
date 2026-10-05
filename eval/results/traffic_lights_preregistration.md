@@ -55,3 +55,29 @@ That is in-sample and optimistic, hence this test.
   its false-colour rate on not-lit objects is at most 10%.
 - P3: Yellow is untested (the dev lights had no amber), so it will be the weakest colour on LISA.
 - The new classifier answers less often: expect no answer for 10-30% of lit lights.
+
+## Addendum (same day, after the LISA result, before labelling or scoring the BDD100K test)
+
+**Pre-registered LISA result: P1 failed.** Under the protocol above (night judged from each crop),
+the new classifier gave a wrong colour to 1,526 of 27,521 lit lights (5.5%), against 140 (0.5%)
+for the old rule. Right colour: 62.1% vs 68.0%. No answer: 32.3% vs 31.5%. Almost all the errors
+(1,353) were red lights called yellow.
+
+**Why.** LISA's crops are named by sequence (`ds` = day, `ns` = night). At night its camera renders
+a lit red lamp with a yellow-white core and only a red rim (1,311 of the 1,353 errors were night
+crops), and the night rule counted hues, so amber won. Separately, judging night from the crop sent
+most daytime crops through the night rule too (dark housings), while the app judges night from
+the whole frame.
+
+**Revision (frozen in this commit).** At night, when hue can't separate red from amber, the glow's
+position in a box tall enough to hold the housing decides: top = red, middle = amber. The orange
+night "yellow" rule is gone. The day rules are unchanged, and the dev lights score the same.
+LISA was used to design this, so **LISA is in-sample for the revision**. There, with night taken
+from the sequence name as the app would: wrong colour 119 / 27,521 (0.4%) vs 140 (0.5%) for the
+old rule. Right colour 60.4% vs 68.0%. No answer 39.1% vs 31.5%. Under the original crop-judged
+night it is 207 (0.8%).
+
+**The BDD100K test is unchanged** and becomes the held-out test for the revision: 20 clips already
+drawn (seed 0), 141 detections collected, no classifier run on them, and the sheets not yet looked
+at. It will be scored for the old rule, the pre-registered version (commit e6ed69d) and this
+revision. P1 and P2 apply to both versions.

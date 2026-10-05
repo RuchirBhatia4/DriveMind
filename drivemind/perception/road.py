@@ -85,7 +85,8 @@ def classify_traffic_light(crop_bgr: np.ndarray, night: bool | None = None) -> s
     housings are painted yellow, side views of them read as "yellow", green-painted housings
     read as "green", and at 640 px a lit red lamp looks pale orange, the same colour as sunlit
     paint. So, in order:
-      * Night: the housing is invisible and the crop is mostly glow, so hue decides.
+      * Night: the housing is invisible and the crop is mostly glow. Hue decides when it can;
+        when a glow's hue could be red or amber, its position in the box decides.
       * Square boxes are pedestrian signals, signs or partial views: no answer.
       * Unambiguous colour: lit green is far more saturated than green paint or sky, and
         paint is never pure red.
@@ -114,8 +115,15 @@ def classify_traffic_light(crop_bgr: np.ndarray, night: bool | None = None) -> s
             return "green"
         if r >= need and r >= amber:
             return "red"
-        if amber >= need and tall and amber < 0.4 * h * w:  # not a lit "don't walk" hand or a sign in headlights
-            return "yellow"
+        # A saturated red lamp can render with a yellow-white core and only a red rim (LISA's
+        # night footage), so hue can't separate red from amber. In a box tall enough to hold
+        # the housing, the glow's position can: top = red, middle = amber.
+        warm = glow & ((hue <= 35) | (hue >= 160))
+        if tall and warm.sum() >= need:
+            per = [int(warm[h * k // 3:max(h * k // 3 + 1, h * (k + 1) // 3)].sum()) for k in range(3)]
+            lit = int(np.argmax(per))
+            if per[lit] >= 0.6 * sum(per) and lit < 2:
+                return "red" if lit == 0 else "yellow"
         return None
     if not tall:
         return None
