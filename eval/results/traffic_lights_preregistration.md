@@ -120,3 +120,25 @@ Predictions for revision 2 on test2:
 - wrong colour on lit lights at most 5%
 - false colour on not-lit objects at most 10%
 - no answer for 30-45% of lit lights
+
+## Result on test2 (revision 2, commit 61831f4)
+
+The 20 clips held 78 detections in 11 clips: 50 lit (34 red, 15 green, 1 amber), 26 not lit,
+2 unsure (excluded). The labels were committed (95dd9d0) before scoring.
+
+| Classifier | Lit: right | Lit: wrong colour | Lit: no answer | Not lit: false colour |
+|---|---|---|---|---|
+| Old colour counts | 48 | 1 (2%) | 1 | 3 / 26 |
+| Revision 2 | 38 | 1 (2%) | 11 (22%) | 0 / 26 |
+
+- Wrong colour at most 5%: **held** (1 of 50).
+- False colour at most 10%: **held** (0 of 26).
+- No answer 30-45%: it answered more often than predicted (22%).
+
+The one wrong colour was a red lamp at dusk read as yellow (clip `024ac038`, 24 s). The old rule
+made the same mistake in that scene at 20 s. Neither read the only amber light in any BDD100K set.
+The old rule does well on these clips, which have dark housings and clear lamps. Its failures are
+the yellow-housing and cyan-sky scenes of dev and test.
+
+Caveats: 50 lit lights from 11 clips. Frames 2 s apart are correlated (16 of the red lights are one
+dusk intersection). The labels are by eye.
