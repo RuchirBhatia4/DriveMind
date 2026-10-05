@@ -19,7 +19,7 @@ import re
 import time
 
 from drivemind.brain.claude_brain import ClaudeUnavailable
-from drivemind.brain.common import BrainContext, BrainResult
+from drivemind.brain.common import BrainContext, BrainResult, answer_light_question
 
 COMPLEX = re.compile(
     r"\b(why|explain|compare|describe|what (did|was)|earlier|ago|passed|just saw|read|how far|"
@@ -38,6 +38,8 @@ class BrainRouter:
         return {"local": self.local is not None, "claude": self.claude is not None}
 
     def route(self, ctx: BrainContext, mode: str) -> str:
+        if answer_light_question(ctx.query, ctx.lights) is not None:
+            return "perception"  # traffic-light colour: the lamp detector answers, in any mode
         claude_ok = self.claude is not None and time.monotonic() > self.claude_down_until
         if mode == "claude" and claude_ok:
             return "claude"
@@ -52,6 +54,11 @@ class BrainRouter:
 
     def answer(self, ctx: BrainContext, mode: str, memory=None) -> BrainResult:
         choice = self.route(ctx, mode)
+        if choice == "perception":
+            t0 = time.perf_counter()
+            text = answer_light_question(ctx.query, ctx.lights)
+            return BrainResult(text=text, brain="perception", ms=round((time.perf_counter() - t0) * 1000, 1),
+                               detail={"route": "traffic_light", "lights": ctx.lights})
         if choice == "claude":
             try:
                 res = self.claude.answer(ctx, memory)

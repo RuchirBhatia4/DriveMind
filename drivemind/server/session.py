@@ -31,7 +31,7 @@ from drivemind.brain.common import BrainContext
 from drivemind.brain.safety import AttentionManager
 from drivemind.brain.tools import CarState
 from drivemind.perception.driver import DriverMonitor, summarize_driver
-from drivemind.perception.road import RoadPerception, summarize_road
+from drivemind.perception.road import RoadPerception, light_states, summarize_road
 from drivemind.server.models import models
 
 log = logging.getLogger("drivemind.session")
@@ -347,6 +347,7 @@ class Session:
                 car=self.car,
                 workload=workload,
                 history=list(self.history),
+                lights=light_states(self.last_road),
             )
             await self.send({"type": "thinking", "brain": models.router.route(ctx, self.brain_mode)})
             ex = MLX_EXECUTOR if models.router.route(ctx, self.brain_mode) == "local" else self.ex["brain"]

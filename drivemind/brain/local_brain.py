@@ -36,7 +36,10 @@ from drivemind.brain.common import (
     BrainResult,
     command_intent,
     downscale_jpeg,
+    ground_light_claims,
+    light_sentence,
     memory_intent,
+    mentions_light_colour,
     safety_intent,
 )
 from drivemind.brain.tools import TOOL_NAMES, execute_vehicle_tool, tools_prompt_block
@@ -111,11 +114,10 @@ class LocalBrain:
 
     @staticmethod
     def _plain_context(ctx: BrainContext) -> str:
-        # Detection counts help with "how many" questions; the heuristic traffic-light colour is
-        # left out so it can't override what the model sees. Recent turns allow follow-ups.
-        roads = ctx.road_summary.split(" Including ")[0]
+        # Detection counts help with "how many" questions, and traffic-light colours come from the
+        # lamp detector (eval/traffic_light_eval.py). Recent turns allow follow-ups.
         hist = " ".join(f"Driver: {u} You: {a}" for u, a in ctx.history[-3:])
-        return f"Perception: {roads}\n" + (f"Recent conversation: {hist}\n" if hist else "")
+        return f"Perception: {ctx.road_summary}\n" + (f"Recent conversation: {hist}\n" if hist else "")
 
     def _result(self, say: str, calls, retrieved, t0: float, detail: dict) -> BrainResult:
         return BrainResult(text=say.strip(), brain=self.name, tool_calls=calls, retrieved=retrieved,
@@ -146,8 +148,11 @@ class LocalBrain:
             obs, gen = self._generate(SYSTEM_PROMPT, (
                 "In one short sentence, describe what you see ahead that matters for this question. "
                 f"Do not say whether it is safe or what the driver should do: \"{q}\""), image, max_tokens=60)
-            kept = [s for s in re.split(r"(?<=[.!?])\s+", obs.strip()) if s and not _SAFETY_CLAIM.search(s)]
-            say = " ".join(kept + ["I can't judge that for you, so please check for yourself."])
+            # Code has the last word: no "it's safe", and the light's colour comes from the lamp detector.
+            kept = [s for s in re.split(r"(?<=[.!?])\s+", obs.strip()) if s and not _SAFETY_CLAIM.search(s)
+                    and not (ctx.lights is not None and mentions_light_colour(s))]
+            lead = [light_sentence(ctx.lights)] if ctx.lights else []
+            say = " ".join(lead + kept + ["I can't judge that for you, so please check for yourself."])
             return self._result(say, calls, retrieved, t0, {"route": "safety_describe", **gen})
 
         # 3. Plain questions about the road: look and answer, no tool list, no examples to copy.
@@ -155,6 +160,7 @@ class LocalBrain:
             say, gen = self._plain_answer(q, image, context=self._plain_context(ctx))
             if not say.strip() or _looks_like_json(say):
                 say = "Sorry, I'm not sure."
+            say = ground_light_claims(say, ctx.lights)
             return self._result(say, calls, retrieved, t0, {"route": "look_and_answer", **gen})
 
         # 4. Car commands: the tool prompt (the memory tool isn't offered).

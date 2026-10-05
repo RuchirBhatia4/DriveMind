@@ -26,9 +26,9 @@
  },
  "new": {
   "lit": 27521,
-  "right": 16636,
+  "right": 16566,
   "wrong_colour": 119,
-  "no_answer": 10766,
+  "no_answer": 10836,
   "unlit": 0,
   "false_colour": 0,
   "per_colour": {
@@ -44,7 +44,7 @@
    },
    "green": {
     "n": 11603,
-    "right": 6848,
+    "right": 6778,
     "wrong": 57
    }
   }

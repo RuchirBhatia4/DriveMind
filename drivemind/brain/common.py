@@ -14,6 +14,7 @@ How to respond:
 - Your reply is spoken aloud to someone who is driving. Use one or two short, natural sentences. No markdown, lists, or emoji.
 - Ground visual answers in the image and the perception summary. If something isn't clearly visible, say so; never invent details like sign text you can't read.
 - Visual memory is only for things that are no longer visible ("what did that sign say?"). Anything about what is visible now is answered from the current image.
+- Traffic-light colours in the perception summary come from a detector that reads the lit lamp. Trust them over the small lights in the image, and if a light is "not readable", say you can't make out its colour.
 - When the user asks for a vehicle function, call the tool and then confirm briefly.
 - You are not a safety system. If asked whether it is safe to turn, merge, or proceed, describe what you see but tell the driver to check for themselves.
 - If the driver workload is high, answer in under ten words."""
@@ -68,6 +69,69 @@ def safety_intent(query: str) -> bool:
     return bool(_SAFETY.search(query))
 
 
+# Traffic-light colour comes from the lamp detector (perception/road.py), not from a language model
+# squinting at a few pixels: at 448 px the on-device model called two green lights red.
+_LIGHT = re.compile(r"\b(?:traffic )?(?:lights?|signals?)\b", re.I)
+_NOT_TRAFFIC = re.compile(r"\b(?:brake|tail|head|street|hazard|fog|turn|dashboard|warning|interior|reading)\s*(?:lights?|signals?)\b", re.I)
+_LIGHT_STATE = re.compile(r"\b(?:red|green|yellow|amber|colou?r|changed?|turned)\b", re.I)
+_COLOURS = re.compile(r"\b(red|green|yellow|amber)\b", re.I)
+
+
+def light_intent(query: str) -> bool:
+    """A question about what colour the traffic light is showing."""
+    return bool(_LIGHT.search(query) and _LIGHT_STATE.search(query) and not _NOT_TRAFFIC.search(query))
+
+
+def light_sentence(lights: list[str | None]) -> str:
+    seen = [c for c in ("red", "yellow", "green") if c in lights]
+    if not lights:
+        return "I don't see a traffic light right now."
+    if not seen:
+        return "I can see a traffic light, but I can't make out its colour from here."
+    if len(seen) > 1:
+        return f"I can see {' and '.join(seen)} lights, so check which one is yours."
+    return f"The light ahead is {seen[0]}."
+
+
+def answer_light_question(query: str, lights: list[str | None] | None) -> str | None:
+    """Deterministic answer to a traffic-light colour question, or None if this isn't one (or there's
+    no road frame). Go/no-go and past-tense questions take their own routes."""
+    if lights is None or not light_intent(query) or safety_intent(query) or memory_intent(query):
+        return None
+    say = light_sentence(lights)
+    seen = [c for c in ("red", "yellow", "green") if c in lights]
+    asked = {"yellow" if c.lower() == "amber" else c.lower() for c in _COLOURS.findall(query)}
+    if len(seen) == 1 and len(asked) == 1 and re.match(r"\s*(?:is|are)\b", query, re.I):
+        return ("Yes, the light ahead is " if asked == set(seen) else "No, the light ahead is ") + f"{seen[0]}."
+    return say
+
+
+# A colour within a few words of "light"/"signal" ("the light ahead is red", "red lights ahead"), not
+# "the car with red tail lights".
+_LIGHT_CLAIM = re.compile(
+    r"\b(?:light|signal)s?\b(?:\W+\w+){0,3}?\W+(?:red|green|yellow|amber)\b"
+    r"|\b(?:red|green|yellow|amber)\b(?:\W+\w+){0,2}?\W+(?:light|signal)s?\b",
+    re.I,
+)
+
+
+def mentions_light_colour(sentence: str) -> bool:
+    return bool(_LIGHT_CLAIM.search(_NOT_TRAFFIC.sub(" ", sentence)))
+
+
+def ground_light_claims(say: str, lights: list[str | None] | None) -> str:
+    """Replace whatever a language model said about traffic-light colour with the detector's reading
+    (guardrails are code). Sentences that mention a light and a colour go; the detector's sentence
+    comes first."""
+    if lights is None:
+        return say
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", say.strip()) if s]
+    kept = [s for s in sentences if not mentions_light_colour(s)]
+    if len(kept) == len(sentences):
+        return say
+    return " ".join([light_sentence(lights)] + kept)
+
+
 @dataclass
 class BrainContext:
     query: str
@@ -77,6 +141,7 @@ class BrainContext:
     car: CarState
     workload: str
     history: list[tuple[str, str]] = field(default_factory=list)
+    lights: list[str | None] | None = None  # lit colour per traffic light in view; None = no road frame
 
     def context_block(self) -> str:
         hist = "\n".join(f"Driver: {u}\nYou: {a}" for u, a in self.history[-4:]) or "(none)"

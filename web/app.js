@@ -247,7 +247,7 @@ function handle(m) {
       pendingUser = addMsg("user", m.text ? esc(m.text) : "<i>(didn’t catch that)</i>");
       pendingUser.insertAdjacentHTML("beforeend", `<span class="meta">${m.audio_s}s audio · Whisper ${m.ms} ms</span>`);
       break;
-    case "thinking": $("brain-badge").textContent = `thinking on ${m.brain === "local" ? "on-device VLM" : "Claude"}…`; break;
+    case "thinking": $("brain-badge").textContent = `thinking on ${{ local: "on-device VLM", claude: "Claude", perception: "light detector" }[m.brain] || m.brain}…`; break;
     case "reply": renderReply(m); break;
     case "deferred": addMsg("sys", `Holding my answer to “${esc(m.query)}”. The road needs your attention.`); break;
     case "alert":
@@ -262,7 +262,7 @@ function handle(m) {
 function renderReply(m) {
   $("brain-badge").textContent = "";
   let meta = [];
-  const brainName = { local: "on-device VLM", claude: "Claude", system: "system", error: "error" }[m.brain] || m.brain;
+  const brainName = { local: "on-device VLM", claude: "Claude", perception: "light detector", system: "system", error: "error" }[m.brain] || m.brain;
   meta.push(brainName);
   if (m.latency?.brain_ms) meta.push(`brain ${Math.round(m.latency.brain_ms)} ms`);
   if (m.latency?.total_ms) meta.push(`end-to-end ${Math.round(m.latency.total_ms)} ms`);

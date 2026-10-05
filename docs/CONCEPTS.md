@@ -32,6 +32,18 @@ Read it alongside the code: every module's docstring is a short version of its s
 
 **Exercise.** Swap `yolo11n.pt` for `yolo11s.pt` and plot latency vs. how many distant cars you detect on a highway clip.
 
+### 1b. Traffic-light state: classic CV on a detected crop
+YOLO finds traffic lights but not their colour, so `classify_traffic_light` reads the lit lamp from the box. Not everything needs a neural net: a cheap, explainable rule on a crop that a network already localised is a common production pattern. The interesting part is how it failed.
+
+- **Counting coloured pixels fails on real streets.** New York's housings are painted yellow, so side views read as "yellow". Green-painted housings read as "green". At 640 px a lit red lamp looks pale orange, the same hue as sunlit paint. Result: 36 of 85 lit lights wrong.
+- **Structure beats colour.** A signal facing you has two dark, unlit lamps and one that isn't dark. Its position gives the state (top red, middle amber, bottom green), whatever colour the camera renders. Side views have no dark discs, and square boxes are pedestrian signals.
+- **Unmistakable colour first, but colour lies too.** Pure red and strong green are trusted, with exceptions. A cyan sky sits in the green hue range and made red lights read **green**, so a lamp must be one compact blob inside the box. A camera that saturates at night renders red lamps with yellow-white cores, so at night position decides red vs amber.
+- **Abstain rather than guess.** When the pattern isn't clear it returns None, and the assistant says it can't make out the light. That trades coverage (15-40% no answer) for few wrong colours.
+- **Pre-registration earns its keep.** Each version was frozen with written predictions before a held-out test. The first two tests *failed* (LISA: night reds called yellow; 20 new BDD100K clips: 19 red lights called green). Both failures came from conditions missing from the design data, and both were fixed and retested on fresh data: 1 wrong of 50 lit lights, 0 of 26 false colours. Without held-out tests, the in-sample "0 of 85 wrong" would have shipped with a red-reads-green bug. See `eval/results/traffic_lights_preregistration.md`.
+- **The VLM is no shortcut here.** Asked about zoomed crops, the 3B vision model named the housing's paint colour: 22 of 85 lit lights wrong, and a colour for 43 of 47 side views.
+
+**Interview Q.** *Your colour classifier scores 100% on your dev set. What do you do before shipping?* (Test on data from other cities, cameras, times of day and weather that you never looked at, decided in advance, and expect it to fail. Then check which errors are dangerous (red → green) rather than counting all errors equally.)
+
 ## 2. Multi-object tracking (ByteTrack)
 **What.** Assigns persistent IDs across frames. Each track has a **Kalman filter** (a constant-velocity motion model) that predicts where the box will be next frame. New detections are matched to predictions using IoU with the **Hungarian algorithm** (optimal bipartite matching; the `lap` package).
 
@@ -128,7 +140,7 @@ We bias the vocabulary with `initial_prompt` (domain terms) and drop segments wi
 - **Prefill vs. decode.** Prefill is compute-bound (we measure ~370–690 tok/s on the prompt). Decode is memory-bandwidth-bound (~110 tok/s). Quantization helps decode the most, because each generated token has to stream all the weights.
 - **Prompted tool calling + few-shot.** The 3B model initially made only one of two requested tool calls. Adding worked examples to the prompt fixed it (*in-context learning*).
 - **The catch: small models copy examples.** With a visual example in that same prompt, "Is the light green?" got "Yes, the light ahead is green." word for word, *at a red light*. Removing the examples made it call tools for plain questions instead ("Navigating to the red light"). The fix was to stop sharing one prompt: only car commands see the tool prompt and its examples, and everything else gets a plain "look and answer" prompt (section 8).
-- **Small details are the limit.** At 448 px wide a distant traffic light is a few pixels. On one intersection frame the model said "The light is red." while both signals facing us were green (a lit orange "don't walk" hand was bigger), and it missed a pickup truck partly hidden on the right. Fixes to try: send zoomed crops of the lights YOLO already found, or classify light state with a small dedicated model.
+- **Small details are the limit.** At 448 px wide a distant traffic light is a few pixels. On one intersection frame the model said "The light is red." while both signals facing us were green (a lit orange "don't walk" hand was bigger). Light colour now comes from a dedicated classifier (section 1b), and the model's own light claims are replaced with its reading. The model still mixes up details: "How many people can you see?" got "I can see 7 cars".
 
 **Code.** `brain/local_brain.py`
 
@@ -144,11 +156,12 @@ This is the core idea behind using LLMs in safety-relevant products: **the LLM i
 | Request | Route | What the model may do |
 |---|---|---|
 | About the past ("what did that sign say?") | visual memory | answer from the best-matching past frame (section 9) |
-| Go/no-go ("can I go now?") | describe only | describe the scene; code drops any sentence claiming it's safe and adds "I can't judge that for you, so please check for yourself." |
+| Traffic-light colour ("is the light green?") | light classifier | nothing: the classifier answers in any brain mode (section 1b) |
+| Go/no-go ("can I go now?") | describe only | describe the scene; code drops any sentence claiming it's safe, puts the classifier's light reading first, and adds "I can't judge that for you, so please check for yourself." |
 | Car command ("I'm cold, play some jazz") | tools | the JSON tool prompt, without the memory tool |
-| Anything else ("is the light green?") | look and answer | a plain prompt with the live image and no tools |
+| Anything else ("what kind of street is this?") | look and answer | a plain prompt with the live image and no tools; any light colour it claims is replaced with the classifier's |
 
-Before this, the model told the driver "it's safe to go", spoke raw JSON aloud, and called tools for plain questions. On real BDD100K frames (`eval/brain_qa_eval.py`), the routed version answered 6/6 light-colour questions correctly on a clearly red and a clearly green frame, never claimed it was safe (4/4), and made the right tool calls for 3/3 commands. The light check catches answer copying; it does not measure how well the model reads lights (see the small-details limit in section 7).
+Before this, the model told the driver "it's safe to go", spoke raw JSON aloud, and called tools for plain questions. On real BDD100K frames (`eval/brain_qa_eval.py`), the routed version got 9/9 light-colour questions right on a red frame, a green frame and a frame with tiny lights. It never claimed it was safe (6/6), and made the right tool calls for 3/3 commands. A bug worth knowing about: the first check for "the model claimed a light colour" matched "the car with the red tail lights" and replaced a car answer with the light's colour. It now needs the colour next to "light" or "signal", excluding tail, brake and head lights.
 
 ## 9. Semantic visual memory (CLIP + retrieval)
 **CLIP** is trained contrastively (InfoNCE loss) so that matching image–caption pairs have high cosine similarity and mismatched pairs low. Result: text and images share one embedding space.

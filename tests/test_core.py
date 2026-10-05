@@ -227,14 +227,14 @@ class _FakeMemory:
         return [{"jpeg": jpeg, "seconds_ago": 20.0, "similarity": 0.27, "summary": "sign"}][:k]
 
 
-def _ctx(query):
+def _ctx(query, lights=None):
     import cv2
 
     from drivemind.brain.common import BrainContext
     from drivemind.brain.tools import CarState
 
     jpeg = cv2.imencode(".jpg", np.zeros((90, 160, 3), np.uint8))[1].tobytes()
-    return BrainContext(query, jpeg, "Detected: 2 cars.", "Driver state: alert.", CarState(), "low")
+    return BrainContext(query, jpeg, "Detected: 2 cars.", "Driver state: alert.", CarState(), "low", lights=lights)
 
 
 def _local_brain(outputs):
@@ -330,3 +330,128 @@ def test_claude_memory_tool_refused_for_present_question():
     res = brain.answer(_ctx("Which car is on my left?"), memory=mem)
     tool_result = sent[1][-1]["content"][0]
     assert mem.searches == [] and "Not searched" in tool_result["content"] and res.text == "A red sedan."
+
+
+# ---- traffic lights -------------------------------------------------------------------------
+# Synthetic signals at about the size YOLO finds them in a 640-px frame (BGR colours).
+PAINT, DARK, SKY = (40, 190, 220), (25, 25, 25), (230, 200, 20)  # yellow housing, unlit lamp, cyan sky
+PEACH, DULL_RED, GREEN_LAMP = (150, 190, 255), (60, 60, 200), (170, 230, 40)
+
+
+def _signal(lit=None, lamp=None, w=12, h=30, sky_edges=False):
+    import cv2
+
+    img = np.zeros((h, w, 3), np.uint8)
+    img[:] = PAINT
+    for k in range(3):
+        cv2.circle(img, (w // 2, int(h * (k + 0.5) / 3)), w // 3, lamp if k == lit else DARK, -1)
+    if sky_edges:
+        img[:, :2], img[:, -2:] = SKY, SKY
+    return img
+
+
+def test_red_lamp_that_looks_orange_is_read_by_position():
+    from drivemind.perception.road import classify_traffic_light
+
+    # At 640 px a lit red lamp in a yellow housing looks pale orange, the same hue as the paint.
+    assert classify_traffic_light(_signal(0, PEACH), night=False) == "red"
+    assert classify_traffic_light(_signal(2, GREEN_LAMP), night=False) == "green"
+
+
+def test_side_views_and_square_boxes_get_no_colour():
+    from drivemind.perception.road import classify_traffic_light
+
+    side = np.zeros((30, 12, 3), np.uint8)
+    side[:] = PAINT  # a yellow side view: paint and visors, no dark lamp faces
+    assert classify_traffic_light(side, night=False) is None
+    assert classify_traffic_light(_signal(1, PEACH, w=24, h=24), night=False) is None  # pedestrian signal
+
+
+def test_cyan_sky_is_not_a_green_lamp():
+    from drivemind.perception.road import classify_traffic_light
+
+    # The held-out test's failure: a saturated cyan sky beside a red light read as green.
+    assert classify_traffic_light(_signal(0, DULL_RED, sky_edges=True), night=False) == "red"
+
+
+def test_night_red_with_yellow_core_is_read_by_position():
+    import cv2
+
+    from drivemind.perception.road import classify_traffic_light
+
+    # LISA's night footage: a red lamp renders as a yellow-white core in an orange ring with a red rim.
+    img = np.full((30, 12, 3), 20, np.uint8)
+    for r, colour in ((5, (40, 40, 230)), (4, (40, 140, 255)), (1, (200, 240, 255))):
+        cv2.circle(img, (6, 5), r, colour, -1)
+    assert classify_traffic_light(img, night=True) == "red"
+    glow = np.full((20, 20, 3), 20, np.uint8)
+    cv2.circle(glow, (10, 10), 6, (40, 140, 255), -1)  # an orange glow with no housing: red or amber?
+    assert classify_traffic_light(glow, night=True) is None
+
+
+def test_road_summary_reports_light_colours():
+    from drivemind.perception.road import summarize_road
+
+    res = {"tracks": [{"label": "car"}, {"label": "traffic light", "state": "green"}, {"label": "traffic light", "state": None}]}
+    assert "Traffic lights (colour read from the lit lamp): 1 green, 1 not readable." in summarize_road(res)
+
+
+@pytest.mark.parametrize(
+    "query,lights,expected",
+    [
+        ("Is the light green?", ["green", None], "Yes, the light ahead is green."),
+        ("Is the light green?", ["red"], "No, the light ahead is red."),
+        ("What colour is the traffic light?", ["red", None, None], "The light ahead is red."),
+        ("Is the light red or green?", ["green"], "The light ahead is green."),
+        ("Is the light red?", [None, None], "I can see a traffic light, but I can't make out its colour from here."),
+        ("Has the light changed?", [], "I don't see a traffic light right now."),
+        ("Is the light green?", ["red", "green"], "I can see red and green lights, so check which one is yours."),
+        ("Can I go, is the light green?", ["green"], None),  # go/no-go: the safety route
+        ("What colour was the last light?", ["green"], None),  # the past: visual memory
+        ("Are my headlights on?", ["green"], None),
+        ("Is the light green?", None, None),  # no road frame
+    ],
+)
+def test_light_questions_answered_from_detector(query, lights, expected):
+    from drivemind.brain.common import answer_light_question
+
+    assert answer_light_question(query, lights) == expected
+
+
+def test_router_sends_light_questions_to_the_detector_in_any_mode():
+    from drivemind.brain.router import BrainRouter
+
+    ctx = _ctx("Is the light green?", lights=["green"])
+    router = BrainRouter(local=_local_brain([]), claude=None)
+    assert router.route(ctx, "claude") == "perception"
+    res = router.answer(ctx, "local")
+    assert res.brain == "perception" and res.text == "Yes, the light ahead is green."
+
+
+def test_go_question_takes_light_colour_from_detector():
+    brain = _local_brain(["The traffic light ahead is red. A bus is crossing."])
+    res = brain.answer(_ctx("Can I go now?", lights=["green", None]), memory=_FakeMemory())
+    assert res.text == "The light ahead is green. A bus is crossing. I can't judge that for you, so please check for yourself."
+
+
+def test_model_light_claims_replaced_by_detector():
+    brain = _local_brain(["There is a red light ahead and two cars."])
+    res = brain.answer(_ctx("What's ahead of us?", lights=[None]), memory=_FakeMemory())
+    assert res.text == "I can see a traffic light, but I can't make out its colour from here."
+
+
+@pytest.mark.parametrize(
+    "sentence,claim",
+    [
+        ("The traffic light ahead is red.", True),
+        ("There are red lights ahead.", True),
+        ("The signal just turned green.", True),
+        ("The car on your left is the one with the red tail lights.", False),  # seen in the eval
+        ("The red car is waiting next to the light.", False),
+        ("Its brake lights are red.", False),
+    ],
+)
+def test_light_colour_claims(sentence, claim):
+    from drivemind.brain.common import mentions_light_colour
+
+    assert mentions_light_colour(sentence) is claim

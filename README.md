@@ -214,27 +214,65 @@ the image centre is the car's heading. The real fix is estimating the car's path
 detection); see the roadmap. Results: [eval/results/fcw_bdd100k.md](eval/results/fcw_bdd100k.md);
 reproduce with `.venv/bin/python -m eval.fcw_footage_eval` (needs a Kaggle token; downloads ~0.5 GB).
 
+## Evaluation: traffic-light colour (BDD100K, LISA)
+
+The on-device model said *"The light is red."* at an intersection where both signals facing the car
+were green: at the 448 px it sees, they're a few pixels wide. Light colour now comes from a small
+classic-CV classifier on the boxes YOLO already finds (`classify_traffic_light` in `road.py`). It
+doesn't count coloured pixels, which is what the first version did: in New York that read yellow-painted
+housings as "yellow" and orange-looking red lamps as "yellow", 36 of 85 lit lights wrong in the local
+clips. Instead it finds the lit lamp: an unmistakable colour first (a compact green blob, pure red),
+otherwise the one lamp position that isn't a dark disc (top red, middle amber, bottom green). It gives
+no answer when unsure, because "I can't make out the light" beats a wrong colour.
+
+Every version was frozen and its predictions written down before testing on lights it had never seen
+([pre-registration and results](eval/results/traffic_lights_preregistration.md)). Two tests failed, and
+each failure led to a fix and a new test:
+
+| Held-out test (version tested) | Lit lights | Wrong colour, old → new | New: no answer | Colour given to side views / signs, old → new |
+|---|---|---|---|---|
+| LISA crops, labelled by its authors (first version) | 27,521 | 0.5% → **5.5%** ✗: red lights at night called yellow | 32% | (none in set) |
+| 20 random BDD100K clips (revision 1) | 82 | 33% → **24%** ✗: 19 red lights called **green** under a cyan sky | 12% | 27% → 9% |
+| 20 more random BDD100K clips (final) | 50 | 2% → **2%** (1 of 50) | 22% | 12% → **0%** |
+
+The final version on the data used to design it: 0 of 85 wrong colours on the local clips, 0.4% on LISA,
+1 of 82 on the first BDD100K test.
+
+**Limits:**
+- It gives no answer for 15-40% of lit lights depending on the footage (small, blurred or dull lamps).
+- It missed the only amber light in the BDD100K clips. On LISA it reads 40% of amber lights.
+- The BDD100K labels are by eye. They're in `eval/labels/`, with the script that rebuilds the labelling sheets.
+- Frames 2 s apart are correlated, so 50 lights are not 50 independent scenes.
+
+We also tried asking the 3B vision model about zoomed crops instead. It named the housing's paint colour:
+22 of 85 lit lights wrong. Reproduce with `.venv/bin/python -m eval.traffic_light_eval dev|lisa|test|test2`.
+
 ## Evaluation: voice answers (visual memory, go/no-go questions, commands)
 
 In a recorded demo, the on-device model answered *"Which car is on my left?"* from a visual-memory
 frame 17 seconds old. Leaving such choices to a 3B model failed in other ways too: it copied an
 example answer from its prompt (*"Yes, the light ahead is green."* at a red light), told the driver
-"it's safe to go", and sometimes spoke raw JSON aloud. Now simple rules pick the route: visual memory
-only for questions about the past, a describe-only prompt for go/no-go questions, the tool prompt only
-for car commands, and a plain "look and answer" prompt for everything else. A small check of 27
-questions on real BDD100K frames:
+"it's safe to go", and sometimes spoke raw JSON aloud. Now simple rules pick the route:
+
+- visual memory only for questions about the past
+- the light classifier above for traffic-light colour, in any brain mode
+- a describe-only prompt for go/no-go questions, where the light's colour also comes from the classifier
+- the tool prompt only for car commands
+- a plain "look and answer" prompt for everything else
+
+A small check of 32 questions on real BDD100K frames:
 
 | Check | Result |
 |---|---|
 | Questions about the present that searched memory | **0/8** |
 | Questions about the past that searched memory | **6/6** (4/6 before) |
-| Light colour on a clearly red and a clearly green frame | **6/6** |
-| "Is it safe to go?" / "Can I go now?" answered without claiming it's safe | **4/4** |
+| Light colour on a red frame, a green frame, and the small-lights frame above | **9/9** |
+| "Is it safe to go?" / "Can I go now?" answered without claiming it's safe | **6/6** |
 | Car commands with the right tool calls | **3/3** |
 
-**Still a limitation:** the model misses small details. On one intersection frame it said *"The light
-is red."* while both signals facing the car were green (at 448 px wide they're a few pixels, and a lit
-"don't walk" hand is bigger), and it missed a pickup truck partly hidden on the right. Results:
+**Still a limitation:** the 3B model misses or mixes up details. It answered *"How many people can you
+see?"* with *"I can see 7 cars"*, read a "KEEP INTERSECTION CLEAR" sign as "KEEP HIGHER CLEAR", and
+answers *"Which car is on my left?"* vaguely. Results:
 [eval/results/brain_qa_after.json](eval/results/brain_qa_after.json); reproduce with
 `.venv/bin/python -m eval.brain_qa_eval` (needs a Kaggle token).
 
@@ -260,7 +298,7 @@ The dashboard (**http://127.0.0.1:8000**) opens by itself; allow camera and micr
    (needs a Kaggle token) builds a 78-second reel of real BDD100K city driving at `data/demo/drivemind_demo_reel.mp4`,
    with a `CREDITS.txt` to include wherever you publish video made from it. Or pick a second camera.
 3. **Talk:** hold **Space** (or the mic button) and ask:
-   - "How many cars are ahead of us?" / "Is the light green?"
+   - "How many cars are ahead of us?" / "Is the light green?" (answered by the light classifier, instantly)
    - "I'm freezing, warm it up and play some jazz" (makes two tool calls)
    - "What did that sign say?" (searches visual memory)
    - "Open all the windows" with the speed slider above 55 mph (the safety envelope vents them instead)
@@ -326,5 +364,6 @@ Model weights are downloaded by `scripts/setup.sh`, not distributed with this re
 | CLIP ViT-B/32 (visual memory) | MIT |
 | MLX, mlx-vlm, mlx-whisper | MIT |
 
-The evaluation datasets (Eyeblink8: GPL-3.0; UTA-RLDD: please cite Ghoddoosian et al., CVPRW 2019)
-are not redistributed here, and neither are model weights trained on them.
+The evaluation datasets (Eyeblink8: GPL-3.0; UTA-RLDD: please cite Ghoddoosian et al., CVPRW 2019;
+LISA Traffic Light Dataset: CC BY-NC-SA 4.0, please cite Jensen et al., IEEE T-ITS 2016 and Philipsen
+et al., ITSC 2015) are not redistributed here, and neither are model weights trained on them.

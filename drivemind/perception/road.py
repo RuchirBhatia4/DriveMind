@@ -21,6 +21,10 @@ ML concepts (see docs/CONCEPTS.md for the long version):
   not depend on distance. Cars in our lane stay below ~0.7 widths off our heading; parked
   cars sit several widths out for their whole approach. Tiny boxes are ignored (a pixel of
   jitter is a big fraction of their size), and the warning must hold for 3 frames in a row.
+* **Traffic-light state (classic CV on a detected crop).** The lit lamp is found mostly by
+  structure (two dark unlit discs and one that isn't), because colour lies: painted housings,
+  cyan skies, saturated night glows. When unsure it says nothing. Measured on held-out footage
+  in eval/traffic_light_eval.py.
 """
 
 from __future__ import annotations
@@ -300,20 +304,34 @@ class RoadPerception:
         }
 
 
+def light_states(result: dict | None) -> list[str | None] | None:
+    """Lit colour of each traffic light in view (None = not readable); None if there's no frame."""
+    if result is None:
+        return None
+    return [tr.get("state") for tr in result.get("tracks", []) if tr["label"] == "traffic light"]
+
+
+def describe_lights(states: list[str | None]) -> str:
+    """'Traffic lights: 2 green, 1 not readable.' Not readable covers side views and lights too
+    small or unclear to call: the classifier would rather say nothing than a wrong colour."""
+    counts = {c: states.count(c) for c in ("red", "yellow", "green") if states.count(c)}
+    unread = states.count(None)
+    parts = [f"{n} {c}" for c, n in counts.items()] + ([f"{unread} not readable"] if unread else [])
+    return "Traffic lights (colour read from the lit lamp): " + ", ".join(parts) + "."
+
+
 def summarize_road(result: dict | None) -> str:
     """Compact, LLM-friendly text summary of the current road state."""
     if not result or not result.get("tracks"):
         return "No objects detected on the road."
     counts: dict[str, int] = {}
-    extras: list[str] = []
     for tr in result["tracks"]:
         counts[tr["label"]] = counts.get(tr["label"], 0) + 1
-        if tr["label"] == "traffic light" and tr.get("state"):
-            extras.append(f"a {tr['state']} traffic light")
     parts = [f"{n} {lbl}{'s' if n > 1 else ''}" for lbl, n in counts.items()]
     s = "Detected: " + ", ".join(parts) + "."
-    if extras:
-        s += " Including " + ", ".join(extras) + "."
+    lights = light_states(result)
+    if lights:
+        s += " " + describe_lights(lights)
     if result.get("min_ttc") is not None:
         s += f" Closest object ahead: time-to-collision ~{result['min_ttc']}s ({result['fcw']})."
     return s

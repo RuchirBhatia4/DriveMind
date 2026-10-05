@@ -26,9 +26,9 @@
  },
  "new": {
   "lit": 85,
-  "right": 73,
+  "right": 72,
   "wrong_colour": 0,
-  "no_answer": 12,
+  "no_answer": 13,
   "unlit": 47,
   "false_colour": 2,
   "per_colour": {
@@ -44,7 +44,7 @@
    },
    "green": {
     "n": 48,
-    "right": 37,
+    "right": 36,
     "wrong": 0
    }
   }
