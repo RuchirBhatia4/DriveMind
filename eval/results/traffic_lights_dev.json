@@ -1,0 +1,54 @@
+{
+ "old": {
+  "lit": 85,
+  "right": 48,
+  "wrong_colour": 36,
+  "no_answer": 1,
+  "unlit": 47,
+  "false_colour": 32,
+  "per_colour": {
+   "red": {
+    "n": 37,
+    "right": 22,
+    "wrong": 15
+   },
+   "yellow": {
+    "n": 0,
+    "right": 0,
+    "wrong": 0
+   },
+   "green": {
+    "n": 48,
+    "right": 26,
+    "wrong": 21
+   }
+  }
+ },
+ "new": {
+  "lit": 85,
+  "right": 73,
+  "wrong_colour": 0,
+  "no_answer": 12,
+  "unlit": 47,
+  "false_colour": 2,
+  "per_colour": {
+   "red": {
+    "n": 37,
+    "right": 36,
+    "wrong": 0
+   },
+   "yellow": {
+    "n": 0,
+    "right": 0,
+    "wrong": 0
+   },
+   "green": {
+    "n": 48,
+    "right": 37,
+    "wrong": 0
+   }
+  }
+ },
+ "excluded_unsure": 4,
+ "clips": 14
+}

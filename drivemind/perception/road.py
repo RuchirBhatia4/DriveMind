@@ -72,22 +72,74 @@ def _pick_device() -> str:
     return "cpu"
 
 
-def classify_traffic_light(crop_bgr: np.ndarray) -> str | None:
-    """Classic CV: count saturated, bright pixels in red / yellow / green hue bands.
-    Not everything needs a neural net. A cheap, explainable heuristic on a crop that a
-    neural net already localized is a common production pattern."""
-    if crop_bgr.size == 0:
+def is_night(frame_bgr: np.ndarray) -> bool:
+    """Median brightness of the whole frame: BDD100K night clips sit at 11-53, day at 68+."""
+    return float(np.median(frame_bgr[::8, ::8].max(axis=2))) < 60
+
+
+def classify_traffic_light(crop_bgr: np.ndarray, night: bool | None = None) -> str | None:
+    """Which lamp is lit: "red", "yellow", "green", or None (side view, unlit, pedestrian
+    signal, or unsure). Classic CV on the crop YOLO found: not everything needs a neural net.
+
+    Counting coloured pixels (the first version) failed on real footage: in New York the
+    housings are painted yellow, side views of them read as "yellow", green-painted housings
+    read as "green", and at 640 px a lit red lamp looks pale orange, the same colour as sunlit
+    paint. So, in order:
+      * Night: the housing is invisible and the crop is mostly glow, so hue decides.
+      * Square boxes are pedestrian signals, signs or partial views: no answer.
+      * Unambiguous colour: lit green is far more saturated than green paint or sky, and
+        paint is never pure red.
+      * Otherwise position: the unlit lamps of a signal facing us are dark discs and the lit
+        one isn't (top = red, middle = yellow, bottom = green). Side views have no dark discs.
+    Unsure returns None: "I can't make out the light" beats a wrong colour.
+    """
+    h, w = crop_bgr.shape[:2]
+    if h < 6 or w < 3:
         return None
-    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
-    bright = (hsv[..., 1] > 90) & (hsv[..., 2] > 140)
-    h = hsv[..., 0]
-    counts = {
-        "red": int(np.count_nonzero(bright & ((h < 10) | (h > 165)))),
-        "yellow": int(np.count_nonzero(bright & (h >= 15) & (h <= 35))),
-        "green": int(np.count_nonzero(bright & (h >= 45) & (h <= 95))),
-    }
-    color, n = max(counts.items(), key=lambda kv: kv[1])
-    return color if n >= max(6, 0.02 * crop_bgr.shape[0] * crop_bgr.shape[1]) else None
+    if w > 1.3 * h:  # horizontal signal: rotate so the left (red) lamp is on top
+        crop_bgr = cv2.rotate(crop_bgr, cv2.ROTATE_90_CLOCKWISE)
+        h, w = w, h
+    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV).astype(int)
+    hue, sat, val = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    need = max(2, 0.01 * h * w)  # pixels
+    if night is None:
+        night = float(np.median(val)) < 100
+    red, green = (hue <= 10) | (hue >= 160), (hue >= 60) & (hue <= 95)
+    tall = h >= 1.35 * w
+    if night:
+        glow = (sat >= 100) & (val >= 170)
+        r, g = int((glow & red).sum()), int((glow & green).sum())
+        amber = int((glow & (hue > 10) & (hue <= 35)).sum())
+        if g >= need and g >= r:
+            return "green"
+        if r >= need and r >= amber:
+            return "red"
+        if amber >= need and tall and amber < 0.4 * h * w:  # not a lit "don't walk" hand or a sign in headlights
+            return "yellow"
+        return None
+    if not tall:
+        return None
+    g_strong = int((green & (sat >= 150) & (val >= 190)).sum())
+    r_strong = int((red & (sat >= 120) & (val >= 200)).sum())
+    if g_strong >= need and g_strong > r_strong:
+        return "green"
+    if r_strong >= need:
+        return "red"
+    dark_row = (val < 100).mean(axis=1)
+    thirds = [float(dark_row[h * k // 3:max(h * k // 3 + 1, h * (k + 1) // 3)].mean()) for k in range(3)]
+    lit = int(np.argmin(thirds))
+    others = [d for k, d in enumerate(thirds) if k != lit]
+    if min(others) < 0.15 or thirds[lit] > 0.5 * min(others):
+        return None  # no clear pattern of two dark lamps and one lit one
+    band = slice(h * lit // 3, max(h * lit // 3 + 1, h * (lit + 1) // 3))
+    bright = val[band] >= 160
+    g = int((bright & green[band] & (sat[band] >= 40)).sum())
+    warm = int((bright & ((hue[band] <= 35) | (hue[band] >= 160))).sum())
+    if lit == 2 and g >= need:
+        return "green"
+    if lit in (0, 1) and warm >= need and warm > g:
+        return "red" if lit == 0 else "yellow"
+    return None
 
 
 @dataclass
@@ -178,6 +230,7 @@ class RoadPerception:
         tracks: list[dict] = []
         min_ttc: float | None = None
         lead_id: int | None = None
+        night: bool | None = None
 
         if boxes is not None and len(boxes):
             # .tolist() -> plain Python floats/ints (numpy scalars aren't JSON-serializable)
@@ -194,8 +247,10 @@ class RoadPerception:
                     "box": [round(x1 / w, 4), round(y1 / h, 4), round(x2 / w, 4), round(y2 / h, 4)],
                 }
                 if label == "traffic light":
+                    if night is None:
+                        night = is_night(frame_bgr)
                     crop = frame_bgr[int(y1) : int(y2), int(x1) : int(x2)]
-                    track["state"] = classify_traffic_light(crop)
+                    track["state"] = classify_traffic_light(crop, night)
                 if tid is not None and label in COLLIDABLE:
                     scale = self._scale(int(tid), x1, y1, x2, y2, w, h)
                     ttc = None if scale is None else self._ttc(int(tid), t, scale)
