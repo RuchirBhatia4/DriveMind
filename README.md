@@ -284,8 +284,8 @@ packages), Chrome, and a webcam + microphone. `ffmpeg` (`brew install ffmpeg`) i
 `scripts/e2e_check.py`.
 
 ```bash
-git clone https://github.com/RuchirBhatia4/Multimodal-In-Vehicle-AI-Assistant.git
-cd Multimodal-In-Vehicle-AI-Assistant
+git clone https://github.com/RuchirBhatia4/DriveMind.git
+cd DriveMind
 scripts/setup.sh      # one time: venv, dependencies, ~5 GB of model weights (~3 min with a fast connection)
 scripts/run.sh        # every time; runs offline and opens the dashboard in Chrome when ready (~15-30 s)
 ```
